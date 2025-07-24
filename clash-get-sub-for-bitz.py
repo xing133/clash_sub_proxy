@@ -1,80 +1,74 @@
 #!/usr/bin/env python3
 """
-Clash‑Verge v1.3.8 订阅下载（精简 Python 版）
+Clash Subscription Bridge (single‑URL, fixed endpoint)
+逻辑源自 Clash‑Verge v1.3.8
 
-- 支持 http/https，优先 https；
-- 失败后自动关闭证书校验再次尝试（等价于 v1.3.8 中
-  `danger_accept_invalid_certs(true)` 的 fallback）；
-- 校验 YAML 并确保包含 `proxies:` 字段；
-- 最多重试 3 次。
-
-# pip install requests PyYAML
+pip install fastapi uvicorn requests pyyaml
 
 """
-import sys
-import time
-import yaml
-import requests
+import sys, time, yaml, requests
 from urllib.parse import urlparse
+from fastapi import FastAPI, Response
+import uvicorn
 
-# -------- 可按需调整的一些常量 --------
-UA = "Clash-Verge/1.3.8 (+https://github.com/zzzgydi/clash-verge)"   # 同 v1.3.8 请求头:contentReference[oaicite:0]{index=0}
-TIMEOUT = 20         # 单次网络超时
-MAX_RETRY = 3        # 最大重试次数
-# -----------------------------------
+# ---- 配置 ----
+PORT        = 18518                          # 低冲突用户端口
+ENDPOINT    = "/sub.yaml"                    # 固定路径
+UA          = "Clash-Verge/1.3.8 (+https://github.com/zzzgydi/clash-verge)"
+TIMEOUT     = 20
+MAX_RETRY   = 3
+# --------------
 
-def fetch_subscription(url: str) -> str:
-    """
-    按 v1.3.8 逻辑下载订阅并返回纯文本。
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("只支持 http/https 订阅地址")
-
-    session = requests.Session()
-    session.headers.update({"User-Agent": UA})
-
-    verify = True    # 第一次严格验证 TLS
+def fetch_yaml(url: str) -> str:
+    """下载并校验订阅 YAML（保持 v1.3.8 逻辑）"""
+    if urlparse(url).scheme not in ("http", "https"):
+        raise ValueError("只接受 http/https 订阅链接")
+    sess = requests.Session()
+    sess.headers.update({"User-Agent": UA})
+    verify = True
     for attempt in range(1, MAX_RETRY + 1):
         try:
-            resp = session.get(url, timeout=TIMEOUT, verify=verify, allow_redirects=True)
-            resp.raise_for_status()
-            text = resp.text
-
-            # YAML 基本合法性 & proxies 字段检查
-            try:
-                doc = yaml.safe_load(text)
-                if not isinstance(doc, dict) or "proxies" not in doc:
-                    raise ValueError("订阅内容缺少 'proxies' 字段")
-            except yaml.YAMLError as e:
-                raise ValueError(f"订阅内容 YAML 解析失败: {e}") from None
-
+            r = sess.get(url, timeout=TIMEOUT, verify=verify, allow_redirects=True)
+            r.raise_for_status()
+            text = r.text
+            data = yaml.safe_load(text)
+            if not isinstance(data, dict) or "proxies" not in data:
+                raise ValueError("订阅内容不包含 'proxies' 字段")
             return text
-
-        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as net_err:
-            if verify:                # 第一次 TLS 失败就关验证再试
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+            if verify:        # 首次 TLS 失败 → 忽略证书再试
                 verify = False
-                continue              # 等价于 Rust 版的 fallback
-            elif attempt < MAX_RETRY: # 其他网络错误做指数退避重试
-                time.sleep(2 ** attempt)
                 continue
-            else:
-                raise net_err         # 最终仍失败就抛给调用者
+            elif attempt < MAX_RETRY:
+                time.sleep(2 ** attempt)    # 指数退避
+                continue
+            raise RuntimeError(f"下载失败: {e}")
         except Exception:
-            raise                    # 其他异常不做吞并，直接抛出
+            raise
+    raise RuntimeError("多次重试后仍失败")
 
-def main() -> None:
-    url = input("请输入 HTTPS 订阅链接: ").strip()
+def main():
+    # —— Step 0: 读取用户输入并抓取一次 ——
     try:
-        content = fetch_subscription(url)
-        print("\n=== 订阅内容开始 ===\n")
-        print(content)
-        print("=== 订阅内容结束 ===")
-    except Exception as e:
-        sys.stderr.write(f"订阅获取失败: {e}\n")
+        url = input("输入订阅 URL: ").strip()
+        yaml_text = fetch_yaml(url)
+        print("订阅抓取成功，服务启动中 …  url: http://127.0.0.1:18518/sub.yaml")
+    except Exception as exc:
+        sys.stderr.write(f"初始化失败: {exc}\n")
         sys.exit(1)
+
+    # —— Step 1: 启动 FastAPI 服务，固定端点返回缓存内容 ——
+    app = FastAPI(title="Clash Subscription Bridge")
+
+    @app.get(ENDPOINT)
+    async def serve_yaml():
+        return Response(yaml_text, media_type="application/yaml")
+
+    @app.get("/")
+    async def index():
+        return {"msg": f"桥接服务运行中；订阅地址: http://127.0.0.1:{PORT}{ENDPOINT}"}
+
+    uvicorn.run(app, host="127.0.0.1", port=PORT)
 
 if __name__ == "__main__":
     main()
-
-
