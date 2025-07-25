@@ -49,8 +49,7 @@ def main():
     # —— Step 0: 读取用户输入并抓取一次 ——
     try:
         url = input("输入订阅 URL: ").strip()
-        yaml_text = fetch_yaml(url)
-        print("订阅抓取成功，服务启动中 …  url: http://127.0.0.1:18518/sub.yaml")
+        print("服务启动中 …  url: http://127.0.0.1:18518/sub.yaml")
     except Exception as exc:
         sys.stderr.write(f"初始化失败: {exc}\n")
         sys.exit(1)
@@ -60,7 +59,11 @@ def main():
 
     @app.get(ENDPOINT)
     async def serve_yaml():
-        return Response(yaml_text, media_type="application/yaml")
+        try:
+            yaml_text = fetch_yaml(url)
+            return Response(yaml_text, media_type="application/yaml")
+        except Exception as exc:
+            return Response(f"获取订阅失败: {exc}", status_code=500, media_type="text/plain")
 
     @app.get("/")
     async def index():
