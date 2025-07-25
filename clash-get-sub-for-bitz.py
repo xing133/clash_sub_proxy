@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""
-Clash Subscription Bridge (single‑URL, fixed endpoint)
-逻辑源自 Clash‑Verge v1.3.8
 
-pip install fastapi uvicorn requests pyyaml
+# Clash Subscription Bridge (single‑URL, fixed endpoint)
+# 逻辑源自 Clash‑Verge v1.3.8
 
-"""
 import sys, time, yaml, requests
 from urllib.parse import urlparse
 from fastapi import FastAPI, Response
@@ -20,6 +17,7 @@ MAX_RETRY   = 3
 # --------------
 
 def fetch_yaml(url: str) -> str:
+    print(f"正在下载订阅: {url}")
     """下载并校验订阅 YAML（保持 v1.3.8 逻辑）"""
     if urlparse(url).scheme not in ("http", "https"):
         raise ValueError("只接受 http/https 订阅链接")
